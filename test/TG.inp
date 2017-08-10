@@ -1,0 +1,9 @@
+#pot	XLJSf
+#nSites	4
+#Sites	>C<	-CH2-	-CH3a	-CH3c
+#sig	3.98	3.98	3.8	4.2
+#eps	32	54.6	128	75
+#A	0.0	0.0	0.5	0.0
+#rInc	0.005
+#rInit	0.2
+
