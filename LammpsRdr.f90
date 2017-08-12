@@ -1,5 +1,5 @@
 program	LammpsMdRdr
-	character dumString*198,logFile*88,outFile*88,firstWord*4,CallIntraVdw*3,dumString2*20
+	character dumString*198,logFile*88,outFile*88,firstWord*4,CallIntraVdw*3,dumString2*20,dumString1*20
 	character(len=15) timeStepStr,equil_percentStr
         integer date_time(8)
 	character*10 d(3)
@@ -16,83 +16,86 @@ program	LammpsMdRdr
 	call IntraVdwCalc(AvgIntraVdw,nMolec)
 
 	open(61,file=outFile)
-	write(61,*)TRIM(outFile),'	Date=',d(1)
-	write(6,'(A9,1x,A9,1x,3(A9,1x),6(A15,1x),A6)')'T(K)','rho(gcc)','P(atm)','Z','Zstd','ePot(kcal/mol)','eMol(kcal/mol)','&
+
+	write(*,'(A,F6.2)')"Euilibrium%= ",equil_percent
+	write(61,'(A,F6.2)')"Euilibrium%= ",equil_percent
+	write(*,'(A9,1x,A9,1x,3(A9,1x),6(A15,1x),A6)')'T(K)','rho(gcc)','P(atm)','Z','Zstd','ePot(kcal/mol)','eMol(kcal/mol)','&
 				eVdw(kcal/mol)','IVdw(kcal/mol)','RunTime(ns)','EqTime(ns)','nMolec'
 	write(61,'(A9,1x,A9,1x,3(A9,1x),6(A15,1x),A6)')'T(K)','rho(gcc)','P(atm)','Z','Zstd','ePot(kcal/mol)','eMol(kcal/mol)','&
 				eVdw(kcal/mol)','IVdw(kcal/mol)','RunTime(ns)','EqTime(ns)','nMolec'
-	close(61)
 
 	open(51,file=logFile,ioStat=ioErr)
 	if(ioErr==1)write(*,*)'Error opening logFile'
+	iErr = 0
+	nRunSteps=0
+	timestep=0
+	nDataProduction=0
 
-10	continue
-	noNewData=1
-	do while(noNewData.ne.0)
-		read(51,'(a)',ioStat=ioErr,END=861)dumString
-		read(dumString,*,ioStat=ioErr)firstWord
-		if(ioErr.ne.0)cycle
-		if(firstWord=='Step')noNewData=0
-		if(trim(dumString) .eq. "run		${RunPR}" .OR. trim(dumString) .eq. "run		${Run}") then
-			read(51,*)dumString2,nRunSteps
+	do while(iErr .eq. 0)
+		read(51,*,ioStat=iErr)dumString,dumString1
+		!write(*,*)trim(dumString),"   ",trim(dumString1)
+		if(trim(dumString) .eq. "thermo") read (dumString1, *) iOutputFreq
+		if(trim(dumString) .eq. "timestep") then
+			read(51,*,ioStat=iErr)dumString2,timestep
 		endif
-		if(trim(dumString) .eq. "timestep	${timestep}") then
-			read(51,*)dumString2,timeStep
+		if(trim(dumString) .eq. "run") then
+			read(51,*,ioStat=iErr)dumString2,nRunSteps
 		endif
+		if(dumString .eq. "Step" .AND. dumString1 .eq. "Elapsed" .AND.timestep.ne. 0.d0 .AND. nRunSteps .ne. 0) then
+			nData=nRunSteps/iOutputFreq+1
+			nDataProduction=0
+			tAvg=0
+			pAvg=0
+			zAvg=0
+			rhoAvg=0
+			ePotAvg=0
+			eBondAvg=0
+			eVdwAvg=0
+			do i=1,nData
+				read(51,*,ioStat=iErr)Step,Elapsed,Time,CPULeft,Temp,Press,&
+					PotEng,rKinEng,TotEng,E_vdwl,E_bond,E_coul,Volume,Density
+				if(Elapsed .le. equil_percent*nRunSteps/100.d0)cycle
+				!write(*,*)Step,Elapsed,Time,CPULeft,Temp,Press,&
+				!	PotEng,rKinEng,TotEng,E_vdwl,E_bond,E_coul,Volume,Density
+				nDataProduction=nDataProduction+1
+				tAvg=tAvg+Temp
+				pAvg=pAvg+Press
+				zFactor=Press*Volume*0.0101325/(1.3806488*Temp*Nmolec)
+				zAvg=zAvg+zFactor
+				zSqAvg=zSqAvg+zFactor*zFactor
+				pSqAvg=pSqAvg+Press*Press
+				rhoAvg=rhoAvg+Density
+				ePotAvg=ePotAvg+PotEng
+				eBondAvg=eBondAvg+E_bond
+				eVdwAvg=eVdwAvg+E_vdwl
+			enddo
+			tAvg=tAvg/nDataProduction
+			pAvg=pAvg/nDataProduction
+			zAvg=zAvg/nDataProduction
+			zSqAvg=zSqAvg/nDataProduction
+			pSqAvg=pSqAvg/nDataProduction
+			stDevZ=SQRT( nDataProduction*(zSqAvg-zAvg*zAvg)/(nDataProduction-1) )
+			stDevP=SQRT( nDataProduction*(pSqAvg-pAvg*pAvg)/(nDataProduction-1) )
+			rhoAvg=rhoAvg/nDataProduction
+			ePotAvg=ePotAvg/nDataProduction
+			eBondAvg=eBondAvg/nDataProduction
+			eVdwAvg=eVdwAvg/nDataProduction
+			simTimeNs=timeStep*nRunSteps/1d6
+			write(*,'(f9.2,1x,f9.5,1x,3(f9.3,1x),4(f15.3,1x),2(f15.6,1x),I6)')&
+				tAvg,rhoAvg,pAvg,zAvg,stDevZ,ePotAvg,eBondAvg,eVdwAvg,AvgIntraVdw,simTimeNs,equil_percent/100.d0*simTimeNs,nMolec
+			write(61,'(f9.2,1x,f9.5,1x,3(f9.3,1x),4(f15.3,1x),2(f15.6,1x),I6)')&
+				tAvg,rhoAvg,pAvg,zAvg,stDevZ,ePotAvg,eBondAvg,eVdwAvg,AvgIntraVdw,simTimeNs,equil_percent/100.d0*simTimeNs,nMolec
+		endif
+
 	enddo
-
-	nData=0
-	tAvg=0
-	pAvg=0
-	zAvg=0
-	rhoAvg=0
-	ePotAvg=0
-	eBondAvg=0
-	eVdwAvg=0
-	ioErr=0
-	do while(ioErr==0)
-		read(51,'(a188)',ioStat=ioErr,END=861)dumString
-		!write(*,*)dumString
-
-		read(dumString,*,ioStat=ioErr)Step,Elapsed,Time,CPULeft,Temp,Press,PotEng,rKinEng,TotEng,E_vdwl,E_bond,E_coul,Volume,Density !, zFactor 
-		if(ioErr.NE.0)cycle
-		if(Temp < 1)cycle
-		if(Elapsed < equil_percent*timeStep/100.d0)cycle
-		nData=nData+1
-		tAvg=tAvg+Temp
-		pAvg=pAvg+Press
-		zFactor=Press*Volume*0.0101325/(1.3806488*Temp*Nmolec)
-		zAvg=zAvg+zFactor
-		zSqAvg=zSqAvg+zFactor*zFactor
-		rhoAvg=rhoAvg+Density
-		ePotAvg=ePotAvg+PotEng
-		eBondAvg=eBondAvg+E_bond
-		eVdwAvg=eVdwAvg+E_vdwl
-		!write(*,*)'iData,zFactor',nData,zFactor
-	enddo
-
-	if(nData < 11)goto 10
-	tAvg=tAvg/nData
-	pAvg=pAvg/nData
-	zAvg=zAvg/nData
-	zSqAvg=zSqAvg/nData
-	stDevZ=SQRT( nData*(zSqAvg-zAvg*zAvg)/(nData-1) )
-	rhoAvg=rhoAvg/nData
-	ePotAvg=ePotAvg/nData
-	eBondAvg=eBondAvg/nData
-	eVdwAvg=eVdwAvg/nData
-	simTimeNs=timeStep*nRunSteps/1d6
-
-	open(61,file=outFile,ACCESS='APPEND')
-	write(61,'(f9.2,1x,f9.5,1x,3(f9.3,1x),4(f15.3,1x),2(f15.1,1x),I6)')tAvg,rhoAvg,pAvg,zAvg,stDevZ,ePotAvg,eBondAvg, &
-							eVdwAvg,AvgIntraVdw,simTimeNs,equil_percent/100.d0*simTimeNs,nMolec
-	write(6 ,'(f9.2,1x,f9.5,1x,3(f9.3,1x),4(f15.3,1x),2(f15.1,1x),I6)')tAvg,rhoAvg,pAvg,zAvg,stDevZ,ePotAvg,eBondAvg, &
-							eVdwAvg,AvgIntraVdw,simTimeNs,equil_percent/100.d0*simTimeNs,nMolec
+	close(51)
 	close(61)
-
-	goto 10
-
-861	continue
+	!write(*,*) "iOutputFreq",iOutputFreq
+	!write(*,*) "timeStep",timestep
+	!write(*,*) "nRunSteps",nRunSteps
+	!write(*,*) "nData",nData
+	!write(*,*) "nDataProduction",nDataProduction
+	!write(*,*) "stDevP",stDevP
 
 	write(*,*)'Success! Your data are stored in ',TRIM(outFile)
 	stop
